@@ -8,6 +8,9 @@ np.set_printoptions(precision=2)
 def is_numeric(value):
     return isinstance(value, numbers.Number)
 
+DEBUG = True
+
+
 class Point():
     p: np.ndarray
     x: int
@@ -118,7 +121,6 @@ class Line():
         d2 = self.dist_to_point(line.p2)
         d3 = line.dist_to_point(self.p1)
         d4 = line.dist_to_point(self.p2)
-        # print(f"\t\t Dist({self}, {line}) = {np.min(np.array([d1, d2, d3, d4]))}")
         return np.min(np.array([d1, d2, d3, d4]))
 
     def reflect_hit(self, ball: 'Ball', direction: Point) -> List[Tuple[Point]]:
@@ -130,15 +132,16 @@ class Line():
         normalized_direction = direction.normalized()
         normalized_path_to_projection = path_to_projection.normalized()
 
-
-        print(f'direction = {direction}')
+        if DEBUG:
+            print(f'direction = {direction}')
         if direction * path_to_projection > 0:
             shift = (normalized_path_to_projection * -1) * ball.R
             imaginary_line = Line(self.p1 + shift, self.p2 + shift)
 
             line_full_path = Line(ball.center, ball.center + direction)
             if imaginary_line.intersect_line(line_full_path):
-                print(f'!!!!! Lines {self} and {line_full_path} DO intersect')
+                if DEBUG:
+                    print(f'!!!!! Lines {self} and {line_full_path} DO intersect')
                 direction_to_hit = normalized_direction * ((path_to_projection.len() - ball.R) / (normalized_direction * normalized_path_to_projection))
                 if direction_to_hit.len() <= direction.len():                    
                     new_direction = direction - direction_to_hit
@@ -146,12 +149,14 @@ class Line():
                     new_direction -= 2 * line_norm * (line_norm * new_direction)
                     options.append((ball.center + direction_to_hit, new_direction))
             else:
-                print(f'Lines {self} and {line_full_path} don\'t intersect')
+                if DEBUG:
+                    print(f'Lines {self} and {line_full_path} don\'t intersect')
         
         if not options:
             options.append((ball.center + direction, direction * 0))
 
-        print(f"See options = {options}")
+        if DEBUG:
+            print(f"See options = {options}")
         return options
 
 
@@ -214,7 +219,8 @@ class GolfField():
         self.hole = self.get_hole()
         self.gameball = self.get_gameball()
 
-        print(self.obstacles)
+        if DEBUG:
+            print(self.obstacles)
 
     def correct_obstacle(self, line: Line) -> bool:
         for obstacle in self.obstacles:
@@ -290,7 +296,8 @@ class GolfField():
         options = sorted(options, key = lambda x: (x[0] - self.gameball.center).len())  # Choose the first hit to happen.
         assert options
         new_pos, new_direction = options[0]
-        print(f'See: {new_pos} {new_direction}')
+        if DEBUG:
+            print(f'See: {new_pos} {new_direction}')
 
         self.gameball.center = new_pos
         self.track.append((self.gameball, self.current_step))
@@ -318,7 +325,7 @@ class GolfField():
         direction = Point(np.cos(angle), np.sin(angle)) * power
         self.move(direction)
 
-        observation = self.correct_gameball
+        observation = self.gameball
         done = self.hole.contains_ball(self.gameball)
         reward = 1000 if done else 0
         truncated = False
