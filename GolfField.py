@@ -2,6 +2,8 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import numpy as np
 import numbers
+from PIL import Image
+import seaborn as sns
 from typing import Self, List, Tuple
 np.set_printoptions(precision=2)
 
@@ -267,13 +269,19 @@ class GolfField():
             if self.correct_gameball(gameball):
                 return gameball
 
-    def plot(self):
+    def render(self):
         fig, ax = plt.subplots(figsize=(7, 7))
         for obstacle in self.obstacles:
             if obstacle.len() == 100:
                 ax.plot([obstacle.p1.x, obstacle.p2.x], [obstacle.p1.y, obstacle.p2.y], color='k')
             else:
                 ax.plot([obstacle.p1.x, obstacle.p2.x], [obstacle.p1.y, obstacle.p2.y], color='b')
+
+        for i in range(1, len(self.track)):
+            print(self.track[i - 1], self.track[i])
+            (ball1, col1), (ball2, col2) = self.track[i - 1], self.track[i]
+            ax.plot([ball1.center.x, ball2.center.x], [ball1.center.y, ball2.center.y], color=sns.color_palette()[col2 % 10], )
+
 
         if self.hole.contains_ball(self.gameball):
             hole = patches.Circle(self.hole.center.p, self.hole.R, edgecolor='g', facecolor='black')
@@ -283,6 +291,11 @@ class GolfField():
             gameball = patches.Circle(self.gameball.center.p, self.gameball.R, edgecolor='none', facecolor='red')
         ax.add_patch(hole)
         ax.add_patch(gameball)
+
+        tmp_image_file = 'temp_image.png'
+        plt.savefig(tmp_image_file)
+        image = np.array(Image.open(tmp_image_file))
+        return image
 
     def move(self, direction: Point):
         if direction.len() < 1e-4:
@@ -299,14 +312,14 @@ class GolfField():
         if DEBUG:
             print(f'See: {new_pos} {new_direction}')
 
-        self.gameball.center = new_pos
+        self.gameball = Ball(new_pos, self.gameball.R)
         self.track.append((self.gameball, self.current_step))
         self.move(new_direction)
 
     def reset(self):
         self.gameball = self.get_gameball()
-        self.track = [self.gameball]
         self.current_step = 0
+        self.track = [(self.gameball, self.current_step)]
         info = {
             'track': self.track,
             'current_step': self.current_step,
