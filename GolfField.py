@@ -4,7 +4,8 @@ import numpy as np
 import numbers
 from PIL import Image
 import seaborn as sns
-from typing import Self, List, Tuple
+from typing import Callable, List, Self, Tuple, Union
+
 np.set_printoptions(precision=2)
 
 def is_numeric(value):
@@ -18,44 +19,50 @@ class Point():
     x: int
     y: int
 
-    def __init__(self, p: np.ndarray, y = None):
+    def __init__(self, p: Union[Self, np.ndarray, float], y: Union[float, None] = None):
+        """
+        Pass one of the following options as args p, y:
+            - Point, None
+            - np.ndarray, None
+            - float, float
+        """
         if y is None:
             if isinstance(p, Point):
-                self.p = np.array(p.p)
+                self.p = np.array(p.p, dtype=np.float32)
             else:
-                self.p = np.array(p)
+                self.p = np.array(p, dtype=np.float32)
         else:
-            self.p = np.array([p, y])
+            self.p = np.array([p, y], dtype=np.float32)
         self.x, self.y = self.p[0], self.p[1]
 
-    def __add__(self, p2):
+    def __add__(self, p2: Self) -> Self:
         res = Point(self.p + p2.p)
         return res
 
-    def __sub__(self, p2):
+    def __sub__(self, p2: Self) -> Self:
         res = Point(self.p - p2.p)
         return res
     
-    def __mul__(self, value):
+    def __mul__(self, value: Union[Self, numbers.Number]) -> Union[Self, numbers.Number]:
         if isinstance(value, Point):
             return np.dot(self.p, value.p)
         if isinstance(value, numbers.Number):
             return Point(self.p * value)
         assert True, f"invalid type {type(value)} for multiplying a Point"
 
-    def __rmul__(self, scalar):
-        return self * scalar
+    def __rmul__(self, value: Union[Self, numbers.Number]) -> Union[Self, numbers.Number]:
+        return self * value
 
-    def norm(self):
+    def norm(self) -> float:
         return np.linalg.norm(self.p)
 
-    def len(self):
+    def len(self) -> float:
         return self.norm()
 
-    def normalized(self):
+    def normalized(self) -> Self:
         return Point(self.p / self.norm())
     
-    def rotate_90(self):
+    def rotate_90(self) -> Self:
         return Point(-self.y, self.x)
 
     def __str__(self):
@@ -79,7 +86,7 @@ class Line():
     def __repr__(self):
         return f'[{self.p1} - {self.p2}]'
 
-    def len(self):
+    def len(self) -> float:
         res = self.p1 - self.p2
         return res.len()
 
@@ -97,11 +104,11 @@ class Line():
         return False if self.point_side(p1) * self.point_side(p2) == -1 else True
 
     def intersect_line(self, line2: Self) -> bool:
-        # Checks if two lines intersect
+        # Checks if two lines intersect.
         return not (self.same_side_points(line2.p1, line2.p2) or line2.same_side_points(self.p1, self.p2))
     
     def project_point(self, p: Point) -> Point:
-        # Find the closest point on the line to p.
+        # Finds the closest to p point on the line.
         v_line = self.p2 - self.p1
         v_line_norm = Point(-v_line.y, v_line.x).normalized()
         v_p = p - self.p1
@@ -114,11 +121,11 @@ class Line():
             return self.p2  # case: p_projected is located after p2.
         return self.p1 + v_p_projected  # case: p_projected is located between p1 and p2.
     
-    def dist_to_point(self, p: Point):
+    def dist_to_point(self, p: Point) -> float:
         projection = self.project_point(p)
         return (p - projection).norm()
 
-    def dist_to_line(self, line: Self):
+    def dist_to_line(self, line: Self) -> float:
         d1 = self.dist_to_point(line.p1)
         d2 = self.dist_to_point(line.p2)
         d3 = line.dist_to_point(self.p1)
@@ -126,6 +133,7 @@ class Line():
         return np.min(np.array([d1, d2, d3, d4]))
 
     def reflect_hit(self, ball: 'Ball', direction: Point) -> List[Tuple[Point]]:
+        # Returns list of possible reflection from the line. Choose the closest of them.
         projected_center = self.project_point(ball.center)
         path_to_projection = projected_center - ball.center
 
@@ -145,7 +153,7 @@ class Line():
                 if DEBUG:
                     print(f'!!!!! Lines {self} and {line_full_path} DO intersect')
                 direction_to_hit = normalized_direction * ((path_to_projection.len() - ball.R) / (normalized_direction * normalized_path_to_projection))
-                if direction_to_hit.len() <= direction.len():                    
+                if direction_to_hit.len() <= direction.len():
                     new_direction = direction - direction_to_hit
                     line_norm = (self.p1 - self.p2).rotate_90().normalized()
                     new_direction -= 2 * line_norm * (line_norm * new_direction)
@@ -154,7 +162,23 @@ class Line():
                 if DEBUG:
                     print(f'Lines {self} and {line_full_path} don\'t intersect')
         
+        for edge in [self.p1, self.p2]:
+            path_to_edge = edge - ball.center
+            normalized_path_to_edge = path_to_edge.normalized()
+            if direction * path_to_edge > 0:
+                direction_to_closest: Point = normalized_direction * (normalized_direction * path_to_edge)
+                closest_path_to_edge = path_to_edge - direction_to_closest
+                if closest_path_to_edge.len() < ball.R:
+                    need_gap = np.sqrt(ball.R * ball.R - closest_path_to_edge.len() * closest_path_to_edge.len())
+                    direction_to_hit: Point = normalized_direction * (direction_to_closest.len() - need_gap)
+                    if direction_to_hit.len() <= direction.len():
+                        new_direction = direction - direction_to_hit
+                        final_path_to_edge_normalized = (path_to_edge - direction_to_hit).normalized()
+                        new_direction -= 2 * final_path_to_edge_normalized * (final_path_to_edge_normalized * new_direction)
+                        options.append((ball.center + direction_to_hit, new_direction))
+
         if not options:
+            # If ball doesn't reflect from the line, just let it pass the whole path.
             options.append((ball.center + direction, direction * 0))
 
         if DEBUG:
@@ -186,7 +210,7 @@ class Ball():
         return (self.center - ball.center).len() < (self.R - ball.R)
 
 
-def gen_float(_min, _max):
+def gen_float(_min, _max) -> float:
     return np.random.random() * (_max - _min) + _min
 
 def gen_point(_min, _max) -> Point:
@@ -195,26 +219,29 @@ def gen_point(_min, _max) -> Point:
 def gen_line(_min = 0, _max = 100) -> Line:
     return Line(gen_point(_min, _max), gen_point(_min, _max))
 
-def gen_obstacle(min_len=10, max_len=30) -> Line:
+def gen_obstacle(min_len = 10, max_len = 30) -> Line:
     line = gen_line()
     line.p2 = line.p1 + (line.p2 - line.p1).normalized() * gen_float(min_len, max_len)
     return line
 
-def conflicting_obstacles(obs1: Line, obs2: Line):
-    return obs1.intersect_line(obs2) or obs1.dist_to_line(obs2) < 3
+def conflicting_obstacles(obs1: Line, obs2: Line, confl_dist: float = 3) -> float:
+    # If lines intersect or the distance between them is below the threshold they can't be at the same field.
+    return obs1.intersect_line(obs2) or obs1.dist_to_line(obs2) < confl_dist
+
 
 class GolfField():
+    field_size: int = 100
     gameball_R: int = 1
     hole_R: int = 3
     obstacles: List[Line] = []
 
-    def __init__(self, seed = 0, n_obstacles = 15):
+    def __init__(self, seed: int = 0, n_obstacles: int = 15):
         np.random.seed(seed)
         self.obstacles = list()
-        self.obstacles.append(Line((0, 0), (0, 100)))
-        self.obstacles.append(Line((0, 100), (100, 100)))
-        self.obstacles.append(Line((100, 100), (100, 0)))
-        self.obstacles.append(Line((100, 0), (0, 0)))
+        self.obstacles.append(Line((0, 0), (0, self.field_size)))
+        self.obstacles.append(Line((0, self.field_size), (self.field_size, self.field_size)))
+        self.obstacles.append(Line((self.field_size, self.field_size), (self.field_size, 0)))
+        self.obstacles.append(Line((self.field_size, 0), (0, 0)))
 
         for _ in range(n_obstacles):
             self.obstacles.append(self.get_obstacle())
@@ -249,7 +276,7 @@ class GolfField():
         
     def get_hole(self):
         while True:
-            x, y = np.random.random(2) * 100
+            x, y = np.random.random(2) * self.field_size
             hole = Ball(Point(x, y), self.hole_R)
             if self.correct_hole(hole):
                 return hole
@@ -262,17 +289,17 @@ class GolfField():
                 return False
         return True
         
-    def get_gameball(self):
+    def get_gameball(self) -> Ball:
         while True:
-            x, y = np.random.random(2) * 100
+            x, y = np.random.random(2) * self.field_size
             gameball = Ball(Point(x, y), self.gameball_R)
             if self.correct_gameball(gameball):
                 return gameball
 
-    def render(self):
-        fig, ax = plt.subplots(figsize=(7, 7))
+    def render(self, user_ax = None, image_path = 'temp_field.png') -> np.ndarray:
+        fig, ax = (None, user_ax) if user_ax else plt.subplots(figsize=(7, 7))
         for obstacle in self.obstacles:
-            if obstacle.len() == 100:
+            if obstacle.len() == self.field_size:
                 ax.plot([obstacle.p1.x, obstacle.p2.x], [obstacle.p1.y, obstacle.p2.y], color='k')
             else:
                 ax.plot([obstacle.p1.x, obstacle.p2.x], [obstacle.p1.y, obstacle.p2.y], color='b')
@@ -292,12 +319,25 @@ class GolfField():
         ax.add_patch(hole)
         ax.add_patch(gameball)
 
-        tmp_image_file = 'temp_image.png'
-        plt.savefig(tmp_image_file)
-        image = np.array(Image.open(tmp_image_file))
-        return image
+        plt.savefig(image_path)
+        return np.array(Image.open(image_path))
 
-    def move(self, direction: Point):
+    def render_wind(self, func_for_action: Callable[[float, float], Tuple[float, float]], user_ax = None, image_path = 'temp_wind.png'):
+        fig, ax = (None, user_ax) if user_ax else plt.subplots(figsize=(7, 7))
+        self.render(ax)
+        for x in range(1, self.field_size):
+            for y in range(1, self.field_size):
+                angle, power = func_for_action(x, y)
+                angle *= 2 * np.pi / 360
+                direction = Point(np.cos(angle), np.sin(angle)) * power
+                self.move(direction)
+                ax.arrow(x, y, direction.x, direction.y, head_width=0.1, head_length=0.1, fc='red', ec='red')
+
+        plt.savefig(image_path)
+        return np.array(Image.open(image_path))
+
+
+    def move(self, direction: Point) -> None:
         if direction.len() < 1e-4:
             return
 
@@ -316,7 +356,7 @@ class GolfField():
         self.track.append((self.gameball, self.current_step))
         self.move(new_direction)
 
-    def reset(self):
+    def reset(self) -> Tuple[Ball, dict]:
         self.gameball = self.get_gameball()
         self.current_step = 0
         self.track = [(self.gameball, self.current_step)]
@@ -327,10 +367,10 @@ class GolfField():
 
         return self.gameball, info
 
-    def step(self, action):
+    def step(self, action: Tuple[float, float]) -> Tuple[Ball, int, bool, bool, dict]:
         angle, power = action
-        assert 0 <= angle < 360, f'angle must be between {0} and {360}'
-        assert 0 < power <= 30, f'power must be between {0} and {30}'
+        assert 0 <= angle < 360, f'angle must be between in range [0, 360)'
+        assert 0 < power <= 1e6, f'power must be between in range (0, 1e6]'
 
         self.current_step += 1
 
@@ -352,4 +392,3 @@ class GolfField():
 
 # Example of creating a Field.
 gf = GolfField(4, 15)
-
