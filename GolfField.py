@@ -248,6 +248,8 @@ class GolfField():
         self.hole = self.get_hole()
         self.gameball = self.get_gameball()
 
+        self.reset()
+
         if DEBUG:
             print(self.obstacles)
 
@@ -285,8 +287,8 @@ class GolfField():
         for obstacle in self.obstacles:
             if gameball.intersect_line(obstacle):
                 return False
-            if gameball.intersect_ball(self.hole):
-                return False
+        if gameball.intersect_ball(self.hole):
+            return False
         return True
         
     def get_gameball(self) -> Ball:
@@ -305,7 +307,8 @@ class GolfField():
                 ax.plot([obstacle.p1.x, obstacle.p2.x], [obstacle.p1.y, obstacle.p2.y], color='b')
 
         for i in range(1, len(self.track)):
-            print(self.track[i - 1], self.track[i])
+            if DEBUG:
+                print(self.track[i - 1], self.track[i])
             (ball1, col1), (ball2, col2) = self.track[i - 1], self.track[i]
             ax.plot([ball1.center.x, ball2.center.x], [ball1.center.y, ball2.center.y], color=sns.color_palette()[col2 % 10], )
 
@@ -325,13 +328,25 @@ class GolfField():
     def render_wind(self, func_for_action: Callable[[float, float], Tuple[float, float]], user_ax = None, image_path = 'temp_wind.png'):
         fig, ax = (None, user_ax) if user_ax else plt.subplots(figsize=(7, 7))
         self.render(ax)
-        for x in range(1, self.field_size):
-            for y in range(1, self.field_size):
+        for x in range(1, self.field_size, 4):
+            for y in range(1, self.field_size, 4):
                 angle, power = func_for_action(x, y)
+
+                colors = [
+                    np.array([1.0, 0.0, 0.4]),  # Red 1.3
+                    np.array([0.2, 0.3, 1.0]),  # Blue 1.7
+                    np.array([0.0, 1.0, 0.3]),  # Green 1.6
+                    np.array([0.7, 0.7, 0.1]),  # Yellow 1.2
+                ]
+                color_i = int(angle // 90)
+                color_j = (color_i + 1) % 4
+                w_j = (angle % 90) / 90
+                w_i = 1 - w_j
+                color = w_i * colors[color_i] + w_j * colors[color_j]
+
                 angle *= 2 * np.pi / 360
-                direction = Point(np.cos(angle), np.sin(angle)) * power
-                self.move(direction)
-                ax.arrow(x, y, direction.x, direction.y, head_width=0.1, head_length=0.1, fc='red', ec='red')
+                direction = Point(np.cos(angle), np.sin(angle)) * 1.5
+                ax.arrow(x, y, direction.x, direction.y, head_width=1, head_length=0.5, ec=color)
 
         plt.savefig(image_path)
         return np.array(Image.open(image_path))
