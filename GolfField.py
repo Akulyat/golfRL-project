@@ -11,7 +11,7 @@ np.set_printoptions(precision=2)
 def is_numeric(value):
     return isinstance(value, numbers.Number)
 
-DEBUG = True
+DEBUG = False
 
 
 class Point():

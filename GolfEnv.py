@@ -14,8 +14,9 @@ class GolfEnv():
     max_step: int = 100
     power_limit: float = 30
 
-    def __init__(self, seed: int, obstacles_num: int):
+    def __init__(self, seed: int, obstacles_num: int, env_reward_bonus):
         self.field = GolfField(seed, obstacles_num)
+        self.env_reward_bonus = env_reward_bonus
         self.observation_space = spaces.Box(low=0, high=self.field.field_size, shape=(2,), dtype=np.float32)
 
     def reset(self) -> Tuple[np.ndarray, dict]:
@@ -35,7 +36,7 @@ class GolfEnv():
         new_dist_to_win = (self.field.hole.center - self.field.gameball.center).len()
         done = done or self.field.current_step >= self.max_step  # Checks if maximum steps reached.
 
-        return observation.center.p, reward - new_dist_to_win, done, truncated, info
+        return observation.center.p, reward + self.env_reward_bonus(old_dist_to_win, new_dist_to_win), done, truncated, info
 
     def render(self, ax = None, mode = 'human'):
         self.field.render(user_ax=ax)
@@ -48,8 +49,8 @@ class GolfEnv():
 
 
 class GolfEnv8d1p(GolfEnv):
-    def __init__(self, seed: int, obstacles_num: int):
-        super().__init__(seed, obstacles_num)
+    def __init__(self, seed: int, obstacles_num: int, env_reward_bonus):
+        super().__init__(seed, obstacles_num, env_reward_bonus)
         self.action_space = spaces.Discrete(8)
 
     def step(self, action: int):
