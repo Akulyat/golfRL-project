@@ -4,7 +4,7 @@ import numpy as np
 import numbers
 from PIL import Image
 import seaborn as sns
-from typing import Callable, List, Self, Tuple, Union
+from typing import Callable, List, Tuple, Union
 
 np.set_printoptions(precision=2)
 
@@ -19,7 +19,7 @@ class Point():
     x: int
     y: int
 
-    def __init__(self, p: Union[Self, np.ndarray, float], y: Union[float, None] = None):
+    def __init__(self, p: Union['Point', np.ndarray, float], y: Union[float, None] = None):
         """
         Pass one of the following options as args p, y:
             - Point, None
@@ -35,22 +35,22 @@ class Point():
             self.p = np.array([p, y], dtype=np.float32)
         self.x, self.y = self.p[0], self.p[1]
 
-    def __add__(self, p2: Self) -> Self:
+    def __add__(self, p2: 'Point') -> 'Point':
         res = Point(self.p + p2.p)
         return res
 
-    def __sub__(self, p2: Self) -> Self:
+    def __sub__(self, p2: 'Point') -> 'Point':
         res = Point(self.p - p2.p)
         return res
     
-    def __mul__(self, value: Union[Self, numbers.Number]) -> Union[Self, numbers.Number]:
+    def __mul__(self, value: Union['Point', numbers.Number]) -> Union['Point', numbers.Number]:
         if isinstance(value, Point):
             return np.dot(self.p, value.p)
         if isinstance(value, numbers.Number):
             return Point(self.p * value)
         assert True, f"invalid type {type(value)} for multiplying a Point"
 
-    def __rmul__(self, value: Union[Self, numbers.Number]) -> Union[Self, numbers.Number]:
+    def __rmul__(self, value: Union['Point', numbers.Number]) -> Union['Point', numbers.Number]:
         return self * value
 
     def norm(self) -> float:
@@ -59,10 +59,10 @@ class Point():
     def len(self) -> float:
         return self.norm()
 
-    def normalized(self) -> Self:
+    def normalized(self) -> 'Point':
         return Point(self.p / self.norm())
     
-    def rotate_90(self) -> Self:
+    def rotate_90(self) -> 'Point':
         return Point(-self.y, self.x)
 
     def __str__(self):
@@ -103,7 +103,7 @@ class Line():
         # Checks if two points are at the same side.
         return False if self.point_side(p1) * self.point_side(p2) == -1 else True
 
-    def intersect_line(self, line2: Self) -> bool:
+    def intersect_line(self, line2: 'Line') -> bool:
         # Checks if two lines intersect.
         return not (self.same_side_points(line2.p1, line2.p2) or line2.same_side_points(self.p1, self.p2))
     
@@ -125,7 +125,7 @@ class Line():
         projection = self.project_point(p)
         return (p - projection).norm()
 
-    def dist_to_line(self, line: Self) -> float:
+    def dist_to_line(self, line: 'Line') -> float:
         d1 = self.dist_to_point(line.p1)
         d2 = self.dist_to_point(line.p2)
         d3 = line.dist_to_point(self.p1)
@@ -203,10 +203,10 @@ class Ball():
     def intersect_line(self, line: Line) -> bool:
         return line.dist_to_point(self.center) < self.R
 
-    def intersect_ball(self, ball: Self) -> bool:
+    def intersect_ball(self, ball: 'Ball') -> bool:
         return (self.center - ball.center).len() < (self.R + ball.R)
     
-    def contains_ball(self, ball: Self) -> bool:
+    def contains_ball(self, ball: 'Ball') -> bool:
         return (self.center - ball.center).len() < (self.R - ball.R)
 
 
