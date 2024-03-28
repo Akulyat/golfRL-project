@@ -7,6 +7,8 @@ import pandas as pd
 import random
 import time
 import torch
+from torch import nn
+import torch.nn.functional as F
 from torch.optim.lr_scheduler import _LRScheduler
 from typing import List, Tuple, Deque, Optional, Callable
 
@@ -538,7 +540,7 @@ def train_dqn1_agent(env: gym.Env,
             replay_buffer.add(state, action, reward, next_state, done)
             s_states, s_actions, s_rewards, s_next_states, s_dones = replay_buffer.sample(min(len(replay_buffer), batch_size))
             s_dones = np.array(s_dones)
-            s_ys = np.zeros_like(s_rewards) + s_rewards
+            s_ys = np.zeros_like(s_rewards) * 1. + s_rewards
             s_next_states_tensor = torch.tensor(s_next_states, dtype=torch.float32, device=device).unsqueeze(1)
 
             s_ys += gamma * (torch.max(q_network(s_next_states_tensor), dim=2).values.squeeze(-1)).detach().cpu().numpy() * (1 - s_dones)
@@ -710,3 +712,524 @@ def get_episode_len(env, q_network, epsilon_greedy, device='cpu'):
         episode_len += 1
 
     return episode_len
+
+class PolicyNetwork(torch.nn.Module):
+    """
+    A neural network used as a policy for the REINFORCE algorithm.
+
+    Attributes
+    ----------
+    layer1 : torch.nn.Linear
+        A fully connected layer.
+
+    Methods
+    -------
+    forward(state: torch.Tensor) -> torch.Tensor
+        Define the forward pass of the PolicyNetwork.
+    """
+
+    def __init__(self, n_observations: int, n_actions: int):
+        """
+        Initialize a new instance of PolicyNetwork.
+
+        Parameters
+        ----------
+        n_observations : int
+            The size of the observation space.
+        n_actions : int
+            The size of the action space.
+        """
+        super(PolicyNetwork, self).__init__()
+
+        self.hidden_dim = 128
+
+        self.linear1 = nn.Linear(n_observations, self.hidden_dim)
+        self.linear2 = nn.Linear(self.hidden_dim, self.hidden_dim)
+        self.linear3 = nn.Linear(self.hidden_dim, n_actions)
+
+        self.linear = nn.Linear(n_observations, n_actions)
+
+    def forward(self, state_tensor: torch.Tensor) -> torch.Tensor:
+        """
+        Calculate the probability of each action for the given state.
+
+        Parameters
+        ----------
+        state_tensor : torch.Tensor
+            The input tensor (state).
+            The shape of the tensor should be (N, dim),
+            where N is the number of states vectors in the batch
+            and dim is the dimension of state vectors.
+
+        Returns
+        -------
+        torch.Tensor
+            The output tensor (the probability of each action for the given state).
+        """
+
+        out = self.linear1(state_tensor)
+        out = F.relu(out, inplace=False)
+        out = self.linear2(out)
+        out = F.relu(out, inplace=False)
+
+        out = self.linear3(out)
+        out = F.log_softmax(out)
+
+        return out
+
+def sample_discrete_action(policy_nn: PolicyNetwork,
+                           state: NDArray[np.float64]) -> Tuple[int, torch.Tensor]:
+    """
+    Sample a discrete action based on the given state and policy network.
+
+    This function takes a state and a policy network, and returns a sampled action and its log probability.
+    The action is sampled from a categorical distribution defined by the output of the policy network.
+
+    Parameters
+    ----------
+    policy_nn : PolicyNetwork
+        The policy network that defines the probability distribution of the actions.
+    state : NDArray[np.float64]
+        The state based on which an action needs to be sampled.
+
+    Returns
+    -------
+    Tuple[int, torch.Tensor]
+        The sampled action and its log probability.
+
+    """
+
+    log_probs = policy_nn(torch.tensor(state, dtype=torch.float32))
+    log_probs_np = log_probs.cpu().detach().numpy()
+    log_probs_np -= log_probs_np.max()
+    probs = np.exp(log_probs_np)
+    probs /= probs.sum()
+    sampled_action = np.random.choice(np.arange(len(log_probs)), p=probs)
+    sampled_action_log_probability = log_probs[0]
+
+    # Return the sampled action and its log probability.
+    return sampled_action, sampled_action_log_probability
+
+def sample_one_episode(env: gym.Env,
+                       policy_nn: PolicyNetwork,
+                       max_episode_duration: int,
+                       render: bool = False) -> Tuple[List[NDArray[np.float64]], List[int], List[float], List[torch.Tensor]]:
+    """
+    Execute one episode within the `env` environment utilizing the policy defined by the `policy_nn` parameter.
+
+    Parameters
+    ----------
+    env : gym.Env
+        The environment to play in.
+    policy_nn : PolicyNetwork
+        The policy neural network.
+    max_episode_duration : int
+        The maximum duration of the episode.
+    render : bool, optional
+        Whether to render the environment, by default False.
+
+    Returns
+    -------
+    Tuple[List[NDArray[np.float64]], List[int], List[float], List[torch.Tensor]]
+        The states, actions, rewards, and log probability of action for each time step in the episode.
+    """
+    state, info = env.reset()
+
+    episode_states = []
+    episode_actions = []
+    episode_log_prob_actions = []
+    episode_rewards = []
+    episode_states.append(state)
+
+    for t in range(max_episode_duration):
+
+        if render:
+            env.render_wrapper.render()
+
+        action, action_log_probability = sample_discrete_action(policy_nn, torch.tensor(state))
+
+        state, reward, terminated, truncated, info = env.step(action)
+
+        done = terminated or truncated
+        # replay_buffer.add(state, action, reward, next_state, done)
+
+        episode_states.append(state)
+        episode_actions.append(action)
+        episode_log_prob_actions.append(action_log_probability)
+        episode_rewards.append(reward)
+
+        if done:
+            break
+
+    return episode_states[:-1], episode_actions, episode_rewards, episode_log_prob_actions
+
+def avg_return_on_multiple_episodes(env: gym.Env,
+                                    policy_nn: PolicyNetwork,
+                                    num_test_episode: int,
+                                    max_episode_duration: int,
+                                    render: bool = False) -> float:
+    """
+    Play multiple episodes of the environment and calculate the average return.
+
+    Parameters
+    ----------
+    env : gym.Env
+        The environment to play in.
+    policy_nn : PolicyNetwork
+        The policy neural network.
+    num_test_episode : int
+        The number of episodes to play.
+    max_episode_duration : int
+        The maximum duration of an episode.
+    render : bool, optional
+        Whether to render the environment, by default False.
+
+    Returns
+    -------
+    float
+        The average return.
+    """
+
+    # TODO...
+    total_return = 0
+    for i in range(num_test_episode):
+        episode_states, episode_actions, episode_rewards, episode_log_prob_actions = sample_one_episode(env, policy_nn, max_episode_duration, render)
+        total_return += sum(episode_rewards)
+
+    average_return = total_return / num_test_episode
+
+    return average_return
+
+def train_reinforce_discrete(env: gym.Env,
+                             num_train_episodes: int,
+                             num_test_per_episode: int,
+                             max_episode_duration: int,
+                             learning_rate: float) -> Tuple[PolicyNetwork, List[float]]:
+    """
+    Train a policy using the REINFORCE algorithm.
+
+    Parameters
+    ----------
+    env : gym.Env
+        The environment to train in.
+    num_train_episodes : int
+        The number of training episodes.
+    num_test_per_episode : int
+        The number of tests to perform per episode.
+    max_episode_duration : int
+        The maximum length of an episode, by default EPISODE_DURATION.
+    learning_rate : float
+        The initial step size.
+
+    Returns
+    -------
+    Tuple[PolicyNetwork, List[float]]
+        The final trained policy and the average returns for each episode.
+    """
+    episode_avg_return_list = []
+
+    state_size = env.observation_space.shape[0]
+    action_size = env.action_space.n
+
+    policy_nn = PolicyNetwork(state_size, action_size)
+    optimizer = torch.optim.Adam(policy_nn.parameters(), lr=learning_rate)
+
+    print_every = 50
+    sum_avg = 0
+
+    for episode_index in tqdm(range(num_train_episodes)):
+
+        # TODO...
+
+        episode_states, episode_actions, episode_rewards, episode_log_prob_actions = sample_one_episode(env, policy_nn, max_episode_duration, render=False)
+
+        loss = 0
+
+        for i in range(len(episode_states)):
+            G = torch.sum(torch.tensor(episode_rewards[i:])).detach()
+            loss += -G * episode_log_prob_actions[i]
+
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+
+        # Test the current policy
+        test_avg_return = avg_return_on_multiple_episodes(env=env,
+                                                          policy_nn=policy_nn,
+                                                          num_test_episode=num_test_per_episode,
+                                                          max_episode_duration=max_episode_duration,
+                                                          render=False)
+
+        # Monitoring
+        episode_avg_return_list.append(test_avg_return)
+        sum_avg += test_avg_return
+
+    return policy_nn, episode_avg_return_list
+
+class A2CNetwork(torch.nn.Module):
+    """
+    A neural network used as a policy for the REINFORCE algorithm.
+
+    Attributes
+    ----------
+    layer1 : torch.nn.Linear
+        A fully connected layer.
+
+    Methods
+    -------
+    forward(state: torch.Tensor) -> torch.Tensor
+        Define the forward pass of the PolicyNetwork.
+    """
+
+    def __init__(self, n_observations: int, n_actions: int):
+        """
+        Initialize a new instance of PolicyNetwork.
+
+        Parameters
+        ----------
+        n_observations : int
+            The size of the observation space.
+        n_actions : int
+            The size of the action space.
+        """
+        super(A2CNetwork, self).__init__()
+
+        self.linear = torch.nn.Linear(n_observations, 128, bias=True)
+        self.linear2 = torch.nn.Linear(128, n_actions, bias=True)
+        self.linear3 = torch.nn.Linear(128, 1, bias=True)
+        self.relu = torch.nn.ReLU()
+        self.softmax = torch.nn.functional.softmax
+        self.T = 1
+
+
+    def forward(self, state_tensor: torch.Tensor) -> torch.Tensor:
+        """
+        Calculate the probability of each action for the given state.
+
+        Parameters
+        ----------
+        state_tensor : torch.Tensor
+            The input tensor (state).
+            The shape of the tensor should be (N, dim),
+            where N is the number of states vectors in the batch
+            and dim is the dimension of state vectors.
+
+        Returns
+        -------
+        torch.Tensor
+            The output tensor (the probability of each action for the given state).
+        """
+
+        out = self.linear(state_tensor)
+        out = self.relu(out)
+        action = self.linear2(out)
+        action = self.softmax(action, dim=1)
+        value = self.linear3(out)
+
+        return action, value
+
+def sample_discrete_action_value(policy_nn: A2CNetwork,
+                           state: NDArray[np.float64]) -> Tuple[int, torch.Tensor]:
+    """
+    Sample a discrete action based on the given state and policy network.
+
+    This function takes a state and a policy network, and returns a sampled action and its log probability.
+    The action is sampled from a categorical distribution defined by the output of the policy network.
+
+    Parameters
+    ----------
+    policy_nn : PolicyNetwork
+        The policy network that defines the probability distribution of the actions.
+    state : NDArray[np.float64]
+        The state based on which an action needs to be sampled.
+
+    Returns
+    -------
+    Tuple[int, torch.Tensor]
+        The sampled action and its log probability.
+
+    """
+
+    # TODO...
+    state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0)
+    output, value = policy_nn(state_tensor)
+
+    cat_dist = torch.distributions.Categorical(output)
+    sampled_action = cat_dist.sample()
+    sampled_action_log_probability = cat_dist.log_prob(sampled_action)
+
+    # Return the sampled action and its log probability.
+    return sampled_action.item(), sampled_action_log_probability, value, cat_dist.entropy()
+
+def sample_one_episode_value(env: gym.Env,
+                       policy_nn: A2CNetwork,
+                       max_episode_duration: int,
+                       render: bool = False) -> Tuple[List[NDArray[np.float64]], List[int], List[float], List[torch.Tensor]]:
+    """
+    Execute one episode within the `env` environment utilizing the policy defined by the `policy_nn` parameter.
+
+    Parameters
+    ----------
+    env : gym.Env
+        The environment to play in.
+    policy_nn : PolicyNetwork
+        The policy neural network.
+    max_episode_duration : int
+        The maximum duration of the episode.
+    render : bool, optional
+        Whether to render the environment, by default False.
+
+    Returns
+    -------
+    Tuple[List[NDArray[np.float64]], List[int], List[float], List[torch.Tensor]]
+        The states, actions, rewards, and log probability of action for each time step in the episode.
+    """
+    state_t, info = env.reset()
+
+    episode_states = []
+    episode_actions = []
+    episode_log_prob_actions = []
+    episode_rewards = []
+    episode_values = []
+    episode_entropies = []
+
+    episode_states.append(state_t)
+
+    for t in range(max_episode_duration):
+
+        if render:
+            env.render_wrapper.render()
+
+        action, action_log_probability, value, entropy = sample_discrete_action_value(policy_nn, state_t)
+
+        state_t, reward, done, truncated, _ = env.step(action)
+
+        episode_actions.append(action)
+        episode_log_prob_actions.append(action_log_probability)
+        episode_values.append(value)
+        episode_rewards.append(reward)
+        episode_states.append(state_t)
+        episode_entropies.append(entropy)
+        if done or truncated:
+            break
+
+
+
+    return episode_states, episode_actions, episode_values, episode_rewards, episode_log_prob_actions, episode_entropies
+
+def avg_return_on_multiple_episodes_value(env: gym.Env,
+                                    policy_nn: A2CNetwork,
+                                    num_test_episode: int,
+                                    max_episode_duration: int,
+                                    render: bool = False) -> float:
+    """
+    Play multiple episodes of the environment and calculate the average return.
+
+    Parameters
+    ----------
+    env : gym.Env
+        The environment to play in.
+    policy_nn : PolicyNetwork
+        The policy neural network.
+    num_test_episode : int
+        The number of episodes to play.
+    max_episode_duration : int
+        The maximum duration of an episode.
+    render : bool, optional
+        Whether to render the environment, by default False.
+
+    Returns
+    -------
+    float
+        The average return.
+    """
+
+    # TODO...
+    with torch.no_grad():
+      cumulated_rewards = []
+      for i in range(num_test_episode):
+        episode_states, episode_actions, episode_values, episode_rewards, episode_log_prob_actions, episode_entropies = sample_one_episode_value(
+            env, policy_nn, max_episode_duration,
+            render=False
+        )
+
+        cumulated_rewards.append(sum(episode_rewards))
+
+
+      average_return = sum(cumulated_rewards) / len(cumulated_rewards)
+    return average_return
+
+def train_a2c_discrete(env: gym.Env,
+                             num_train_episodes: int,
+                             num_test_per_episode: int,
+                             max_episode_duration: int,
+                             learning_rate: float) -> Tuple[A2CNetwork, List[float]]:
+    """
+    Train a policy using the A2C algorithm.
+
+    Parameters
+    ----------
+    env : gym.Env
+        The environment to train in.
+    num_train_episodes : int
+        The number of training episodes.
+    num_test_per_episode : int
+        The number of tests to perform per episode.
+    max_episode_duration : int
+        The maximum length of an episode, by default EPISODE_DURATION.
+    learning_rate : float
+        The initial step size.
+
+    Returns
+    -------
+    Tuple[PolicyNetwork, List[float]]
+        The final trained policy and the average returns for each episode.
+    """
+    episode_avg_return_list = []
+
+    state_size = env.observation_space.shape[0]
+    action_size = env.action_space.n # .item()
+
+    policy_nn = A2CNetwork(state_size, action_size)
+    optimizer = torch.optim.AdamW(policy_nn.parameters(), lr=learning_rate)
+
+    pts = []
+
+    for episode_index in tqdm(range(num_train_episodes)):
+
+        # TODO...
+        episode_states, episode_actions, episode_values, episode_rewards, episode_log_prob_actions, episode_entropies = sample_one_episode_value(
+            env, policy_nn, max_episode_duration=max_episode_duration,
+            render=False
+        )
+
+        pts = list(episode_states)
+
+        loss = 0
+        gamma = 0.95
+        action, action_log_probability, value, entropy = sample_discrete_action_value(policy_nn, episode_states[-1])
+        R = value
+        for i in range(len(episode_values)):
+            next_value = episode_values[i + 1] if i + 1 < len(episode_rewards) else 0
+            R = episode_rewards[i] + gamma * R
+            loss += 0.5 * F.mse_loss(R, episode_values[i])
+            loss +=  -((R - episode_values[i]).detach() * episode_log_prob_actions[i]).mean()
+            loss -=  0.01 * episode_entropies[i][0]
+
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+
+        # Test the current policy
+        test_avg_return = avg_return_on_multiple_episodes_value(env=env,
+                                                          policy_nn=policy_nn,
+                                                          num_test_episode=num_test_per_episode,
+                                                          max_episode_duration=max_episode_duration,
+                                                          render=False)
+
+        # Monitoring
+        episode_avg_return_list.append(test_avg_return)
+
+    return policy_nn, episode_avg_return_list

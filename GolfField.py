@@ -248,8 +248,6 @@ class GolfField():
         self.hole = self.get_hole()
         self.gameball = self.get_gameball()
 
-        self.reset()
-
         if DEBUG:
             print(self.obstacles)
 
@@ -328,13 +326,6 @@ class GolfField():
     def render_wind(self, func_for_action: Callable[[float, float], Tuple[float, float]], user_ax = None, image_path = 'temp_wind.png'):
         fig, ax = (None, user_ax) if user_ax else plt.subplots(figsize=(7, 7))
         self.render(ax)
-
-        max_power = 0.1
-        for x in range(1, self.field_size, 4):
-            for y in range(1, self.field_size, 4):
-                angle, power = func_for_action(x, y)
-                max_power = max(max_power, power)
-
         for x in range(1, self.field_size, 4):
             for y in range(1, self.field_size, 4):
                 angle, power = func_for_action(x, y)
@@ -352,7 +343,7 @@ class GolfField():
                 color = w_i * colors[color_i] + w_j * colors[color_j]
 
                 angle *= 2 * np.pi / 360
-                direction = Point(np.cos(angle), np.sin(angle)) * 1.5 * (power / max_power)
+                direction = Point(np.cos(angle), np.sin(angle)) * power * (1.5 / 4)
                 ax.arrow(x, y, direction.x, direction.y, head_width=1, head_length=0.5, ec=color)
 
         plt.savefig(image_path)
