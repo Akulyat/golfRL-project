@@ -81,6 +81,22 @@ class QNetwork(torch.nn.Module):
         return x
 
 
+class QNetworkSequential(torch.nn.Sequential):
+    def __init__(self, n_observations: int, n_actions: int, layers: List[int]):
+        super().__init__()
+
+        self.layers = [n_observations] + layers + [n_actions]
+
+        self.linears = list()
+        for i in range(1, len(self.layers)):
+            self.add_module(f"hidden_layer_{i}", torch.nn.Linear(self.layers[i - 1], self.layers[i]))
+            if i + 1 != len(self.layers):
+                self.add_module(f"hidden_relu_{i}", torch.nn.ReLU())
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return super().forward(x)
+
+
 def test_q_network_agent(env: gym.Env, q_network: torch.nn.Module, num_episode: int = 1, render: bool = True) -> List[int]:
     """
     Test a naive agent in the given environment using the provided Q-network.
