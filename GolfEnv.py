@@ -60,3 +60,21 @@ class GolfEnv8d1p(GolfEnv):
         angle_360 = (angle_8 / 8) * 360
 
         return super().step((angle_360, 4))
+
+
+class GolfEnvDP(GolfEnv):
+    def __init__(self, seed: int, obstacles_num: int, env_reward_bonus, n_angles: int, n_power: int):
+        super().__init__(seed, obstacles_num, env_reward_bonus)
+        self.action_space = spaces.Discrete(8)
+        self.n_angles = n_angles
+        self.n_power = n_power
+
+    def step(self, action: int):
+        assert 0 <= action < (self.n_angles * self.n_power) and isinstance(action, numbers.Number), \
+               f'{self.__class__.__name__}.step() takes an integer in the range [0, {self.n_angles * self.n_power - 1}]'
+
+        angle = action % self.n_angles
+        power = action // self.n_angles * 3 + 1
+        angle_360 = (angle / 8) * 360
+
+        return super().step((angle_360, power))
